@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # Datenbank: TimescaleDB mit pgvector (Kapitel 6)
+  db:
+    image: timescale/timescaledb:latest-pg16
+    restart: always
+    environment:
+      POSTGRES_DB: kanshi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # Baut Schema automatisch auf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kanshi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # UI: NocoDB (Kapitel 3.4)
+  ui:
+    image: nocodb/nocodb:latest
+    restart: always
+    environment:
+      NC_DISABLE_TELEMETRY: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ui_data:/usr/app/data
+
+  # Speicher: MinIO (S3-kompatibel, Fallback für RustFS – Kapitel 5.1)
+  storage:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET}
+    ports:
+      - "9000:9000"  # S3 API (n8n-Trigger)
+      - "9001:9001"  # Console
+    volumes:
+      - storage_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+
+  # Workflow-Engine: Custom n8n (mit FFmpeg/ONNX – Kapitel 5.1)
+  n8n:
+    build: .  # Custom Dockerfile unten
+    restart: always
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: kanshi
+      DB_POSTGRESDB_USER: postgres
+      DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD}
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: ${TIMEZONE}
+      N8N_BASIC_AUTH_ACTIVE: true
+      N8N_BASIC_AUTH_USER: admin
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD}
+      GROK_API_KEY: ${GROK_API_KEY}
+      REID_THRESHOLD: ${REID_THRESHOLD}
+      GROK_TIMEOUT: ${GROK_TIMEOUT}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/.n8n/workflows  # Für JSON-Imports (Kapitel 7)
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    # Für AMD GPU: Füge --gpus all und ROCm in Dockerfile hinzu
+
+volumes:
+  db_data:
+  ui_data:
+  storage_data:
+  n8n_data:
+
+# Custom Dockerfile für n8n (im Root: Dockerfile)
+# FROM n8nio/n8n
+# USER root
+# RUN apk add --no-cache ffmpeg python3 py3-pip git
+# RUN pip install onnxruntime  # Oder onnxruntime-rocm für GPU
+# USER node

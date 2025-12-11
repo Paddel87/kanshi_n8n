@@ -1,0 +1,18 @@
+# Secrets & local configs
+.env
+
+# Data outputs
+data/analyses/
+data/*
+!data/.gitkeep
+
+# Docker volumes (named volumes managed by Docker, but ignore local mounts)
+n8n_data/
+ui_data/
+storage_data/
+db_data/
+
+# Node & OS artifacts
+node_modules/
+.DS_Store
+Thumbs.db

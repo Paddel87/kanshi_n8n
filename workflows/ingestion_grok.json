@@ -1,0 +1,83 @@
+{
+  "name": "Media Ingestion + Grok Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "ingest",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-ingest",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst filename = $input.first().json.filename;\nconst hash = crypto.createHash('md5').update(filename).digest('hex');\nreturn { filename, hash };"
+      },
+      "id": "hash-node",
+      "name": "Calculate Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.x.ai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.GROK_API_KEY}}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "grok-beta" },
+            { "name": "messages", "value": "=[{\"role\": \"user\", \"content\": \"Analysiere Media: {{$json.filename}}. Gib JSON zurück: {\\\"tags\\\": [\\\"latex\\\", \\\"hogtie\\\"], \\\"summary\\\": \\\"Beschreibung\\\"}.\\\"}]" },
+            { "name": "max_tokens", "value": 500 }
+          ]
+        }
+      },
+      "id": "grok-multi-call",
+      "name": "Grok Multi-Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst outDir = '/home/node/files/analyses';\ntry { fs.mkdirSync(outDir, { recursive: true }); } catch {}\nconst filename = $input.first().json.filename;\nconst hash = $input.first().json.hash;\nlet content = $input.all()[0].json;\nlet tags = [];\nlet summary = '';\ntry {\n  const txt = content.choices && content.choices[0] && content.choices[0].message && content.choices[0].message.content || '';\n  const obj = JSON.parse(txt);\n  tags = Array.isArray(obj.tags) ? obj.tags : [];\n  summary = typeof obj.summary === 'string' ? obj.summary : '';\n} catch {\n  summary = 'Keine strukturierte JSON-Antwort';\n}\nconst record = { filename, hash, tags, summary, ts: new Date().toISOString() };\nfs.writeFileSync(path.join(outDir, hash + '.json'), JSON.stringify(record));\nreturn record;"
+      },
+      "id": "save-json",
+      "name": "Save Analysis JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Calculate Hash", "type": "main", "index": 0 }]] },
+    "Calculate Hash": { "main": [[{ "node": "Grok Multi-Call", "type": "main", "index": 0 }]] },
+    "Grok Multi-Call": { "main": [[{ "node": "Save Analysis JSON", "type": "main", "index": 0 }]] },
+    "Save Analysis JSON": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {},
+  "id": "ingestion-grok-minimal"
+}
+
